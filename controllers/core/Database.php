@@ -1,7 +1,6 @@
 <?php
 
-namespace Bindeveloperz;
-use \PDO;
+
 /*******************************************************
  *
  *  driver : mysql , sqlite
@@ -15,19 +14,39 @@ use \PDO;
  *******************************************************/
 
 
-// Todo : get all columns of table using command line tool
-// Todo : Error Handling
 
-/**
- * Class KDB
+/*
+
+
+$config =  [
+'driver' => 'mysql',
+'host' =>  'localhost',
+'database' => '',
+'username' => 'root',
+'password' => '',
+'port' => '3306',
+"option" => true
+];
+
  */
-class Database
+
+
+
+namespace Bindeveloperz;
+
+use Exception;
+use PDO;
+use PDOException;
+
+final class Database
 {
 
-	private static $instance = null;
-	private $_dbh;
-	private $_stmt ;
+    private static $instance = null;
     private static $config = [];
+    private $dbResult = null ;
+
+    private $dbh;
+    private $stmt ;
 
 
     private $driver = "";
@@ -38,23 +57,26 @@ class Database
     private $port = "";
     private $option = "";
 
-    private $whereStr = "";
-    private $orderByStr = "";
-    private $groupByStr = "";
-    private $havingStr = "";
 
-    protected $table = "";
-    protected $columns = [];
-    protected $query = "";
-    protected $errors = null;
-    protected $actionType = "";
+    private $table = "";
+    private $field = "*";
+    private $primaryKey = "id";
+
+    private $where = "";
+    private $orderBy = "";
+    private $groupBy = "";
+    private $having = "";
+    private $limit = "";
+    private $offset = "";
 
 
-    /**
-     * KDB constructor.
-     * @throws Exception
-     * @internal param array $config driver, host, Controllers, username, password, port, option
-     */
+    private $columns = [];
+    private $dbQuery = "";
+    private $errors = null;
+    private $actionType = "";
+    
+
+
     private function __construct()
     {
 
@@ -76,51 +98,34 @@ class Database
         if($this->option == false) $options = null;
 
         try
-		{
-            $this->_dbh = new PDO($dns , $this->username , $this->password , $options) ;
-		}
-		catch (PDOException $e)
-		{
-			throw new Exception("<pre>" . $e->getMessage() . "</pre>");
-		}
+        {
+            $this->dbh = new PDO($dns , $this->username , $this->password , $options) ;
+        }
+        catch (PDOException $e)
+        {
+            die("<p>Database Connection Error: <br>\n" . $e->getMessage() . "<br> \n" . $e->getTraceAsString() . "</p>");
+        }
 
     }//constructor end
 
-    public static function getInstance($config=[])
-	{
-	    self::$config = $config;
-		if(!isset(self::$instance))
-		{
-			return self::$instance = new Database();
-		}
-		return self::$instance;
-	}
-
-    private function execute()
+    public static function getInstance(Array $config)
     {
-        try
+        self::$config = $config;
+        if(!isset(self::$instance))
         {
-            return $this->_stmt->execute();
+            return self::$instance = new Database();
         }
-        catch (Exception $ex)
-        {
-            die($ex->getMessage() . "<br> \n" . $ex->getTraceAsString());
-        }
+        return self::$instance;
     }
 
-    private function onlyOne($type = null)
-    {
-        $this->execute();
-        $resultType = $this->getResultType($type);
-        $result = $this->_stmt->fetch($resultType);
-        if(empty($result))
-        {
-            return null;
-        }
-        return $result;
-    }
 
-    private function bind($values , $type = null)
+    /***************************************************
+     * PDO Wrapper Methods
+     **************************************************/
+
+
+
+    private function _bind($values , $type = null)
     {
         foreach ($values as $param => $value)
         {
@@ -140,120 +145,173 @@ class Database
                         $type = PDO::PARAM_STR;
                 }
             }
-            $this->_stmt->bindValue($param , $value , $type);
+            $this->stmt->bindValue($param , $value , $type);
         }
     }
 
-    private function result($type = null)
+    private function _execute()
     {
-        $this->execute();
+        try {
+            return $this->stmt->execute(); //boolean return
+        }
+        catch (Exception $ex) {
+            die("Database Execute Method Error: " . "<br>\n" .$ex->getMessage() . "<br>\n" . $ex->getTraceAsString());
+        }
+    }
+
+    private function _result($type = null)
+    {
+        //first execute then result
         $resultType = $this->getResultType($type);
-        return $this->_stmt->fetchAll($resultType);
+        return $this->stmt->fetchAll($resultType);
     }
 
-
-
-    /*******************************************************
-     *
-     *  Query Helper Functions
-     *
-     *******************************************************/
-
-
-    public function queryWithResult($query , $type = null)
-	{
-		$this->_stmt = $this->_dbh->prepare($query);
-        $result = $this->result($type);
-        if($result) {
-            return $result;
-        }
-        else {
-            die( "Error while executing : " . $query . "<br> Sql Says : " . $this->getErrors());
-        }
-	}
-
-    public function query($query)
+    private function _query($query)
     {
-        $this->_stmt = $this->_dbh->prepare($query);
+        $this->stmt = $this->dbh->prepare($query);
     }
 
-    public function queryWithExecute($query)
+
+    /***************************************************
+     * MYSQL RAW QUERY METHODS
+     **************************************************/
+
+    public function rawQuery($query)
     {
-        $this->_stmt = $this->_dbh->prepare($query);
-        $result = $this->execute();
-        if($result) {
-            return true;
-        }
-        else {
-            die( "Error while executing : " . $query . "<br> Sql Says : " . $this->getErrors());
-        }
+        $this->_query($query);
     }
 
-    public function sqlCount()
+    public function execute()
     {
-        return $this->_stmt->rowCount();
+        $this->_execute();
     }
 
-    public function count($table)
+    public function result()
     {
-        $this->queryWithResult("select count(*) found from $table $this->whereStr  $this->groupByStr $this->orderByStr $this->havingStr");
-        return $this->result()[0]->found;
+        return $this->result();
     }
 
-    public function sum($field, $tablename)
+    public function executedCount()
     {
-        $this->queryWithResult("select sum($field) total from $tablename $this->whereStr  $this->groupByStr $this->orderByStr $this->havingStr ");
-        return $this->result()[0]->total;
+        return $this->stmt->rowCount();
     }
 
-    public function max($field, $tablename)
-    {
-        $this->queryWithExecute("SELECT MAX($field) total FROM $tablename $this->whereStr  $this->groupByStr $this->orderByStr $this->havingStr");
-        return  $this->result()[0]->total;
-    }
 
-    public function lastInsertId()
-    {
-        $id = $this->_dbh->lastInsertId();
-        if($id) {
-            return $id;
-        }
-        return null;
-    }
+    /***************************************************
+     * MYSQL TRANSACTION METHODS
+     **************************************************/
+
 
     public function beginTransaction()
     {
-        return $this->_dbh->beginTransaction();
+        return $this->dbh->beginTransaction();
     }
 
     public function endTransaction()
     {
-        return $this->_dbh->commit();
+        return $this->dbh->commit();
     }
 
     public function cancelTransaction()
     {
-        return $this->_dbh->rollBack();
+        return $this->dbh->rollBack();
     }
 
-//    public function leftJoin($lefttable, $righttable, $matchedrow, $fields, $order , $type="")
-//    {
-//        $sql  = ("SELECT $fields FROM $lefttable LEFT JOIN $righttable ON $lefttable.$matchedrow = $righttable.$matchedrow $order");
-//        $this->queryWithResult($sql);
-//        if (!$this->execute()) {
-//            die( "Could not successfully run query ($sql) from DB: select where 2");
-//        }
-//        return $this->result($type);
-//    }
+
+
+    /***************************************************
+     * MYSQL RESULT Methods
+     **************************************************/
+
+
+
+    public function executeQuery($query)
+    {
+        $this->_query($query);
+        return $this->_execute();
+    }
+
+    public function all($type=null)
+    {
+        $sql  = ("SELECT {$this->tableColumn} FROM `$this->table` {$this->where} {$this->groupBy} {$this->orderBy} {$this->having} {$this->limit} {$this->offset} ");
+        $this->dbQuery = $sql;
+        $this->_query($sql);
+        $this->_execute();
+        return $this->_result($type);
+    }
+
+    public function first($type=null)
+    {
+        $this->limit(1);
+        $sql  = ("SELECT {$this->tableColumn} FROM `$this->table` {$this->where} {$this->groupBy} {$this->orderBy} {$this->having} {$this->limit} {$this->offset} ");
+        $this->dbQuery = $sql;
+        $this->_query($sql);
+        $this->_execute();
+        return $this->_result($type)[0];
+    }
+
+    public function toJson($result)
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Content-Type: application/json; charset=UTF-8");
+        return json_encode($result);
+    }
+
+
 
 
     /*******************************************************
      *
-     *  Database CRUD FUNCTIONS
+     *  MYSQL SQL FUNCTIONS
      *
      *******************************************************/
 
-    public function insert($tableName , $dataWithColumn)
+
+
+    public function count()
+    {
+        $sql = $this->aggregateFunctions("count");
+        $this->dbQuery = $sql;
+        $this->executeQuery($sql);
+        return $this->_result()[0]->total;
+    }
+
+    public function sum()
+    {
+        $sql = $this->aggregateFunctions("sum");
+        $this->dbQuery = $sql;
+        $this->executeQuery($sql);
+        return $this->_result()[0]->total;
+    }
+
+
+    public function max()
+    {
+        $sql = $this->aggregateFunctions("max");
+        $this->dbQuery = $sql;
+        $this->executeQuery($sql);
+        return $this->_result()[0]->total;
+    }
+
+
+    public function min()
+    {
+        $sql = $this->aggregateFunctions("min");
+        $this->dbQuery = $sql;
+        $this->executeQuery($sql);
+        return $this->_result()[0]->total;
+    }
+
+
+
+    /*******************************************************
+     *
+     *  Database IUD FUNCTIONS
+     *
+     *******************************************************/
+
+
+    public function insert($dataWithColumn , $wantResult = false , $primaryFieldName = "id" , $type=null)
     {
 
         if(empty($dataWithColumn))
@@ -264,7 +322,7 @@ class Database
 
         $columns = implode(" , " , $this->arrayKeys($dataWithColumn));
 
-        $query = "INSERT INTO {$tableName} ($columns) values (";
+        $query = "INSERT INTO `$this->table` ($columns) values (";
         $count = 1;
 
         $bind = [];
@@ -278,108 +336,62 @@ class Database
         }//foreach end
         $query .= ")";
 
-        $this->query($query);
-        $this->bind($bind);
+        $this->_query($query);
+        $this->_bind($bind);
 
-        if($this->execute()) {
+        $this->dbQuery = $query;
+
+
+        if( $this->_execute())
+        {
+            if($wantResult)
+            {
+                $this->primaryKey($primaryFieldName);
+                $id = $this->getInsertedID();
+                $this->dbResult = $this->where("$this->primaryKey = $id ")->first();
+            }
             return true;
         }
         return false;
     }//end insert
 
-    public function update($tablename, $values, $where)
+    public function update($values)
     {
 
         $bind = [];
-        $query = "UPDATE $tablename SET " ;
+        $query = "UPDATE `$this->table` SET " ;
         $count = 1;
 
         $counter = count($values);
         foreach ($values as $key => $value)
         {
             if($count == $counter)
-            {
                 $query .= "$key=?";
-            }
             else
-            {
                 $query .= "$key=?,";
-            }
+
             $bind[$count] = $value ;
             $count++;
         }
-        $query .= " $where";
-        $this->query($query);
-        $this->bind($bind);
+        $query .= " $this->where $this->limit $this->offset ";
+        $this->_query($query);
+        $this->_bind($bind);
 
-        return $this->execute();
+        $this->dbQuery = $query;
+
+        if( $this->_execute())
+        {
+            return true;
+        }
+        return false;
     }//update end
 
-    public function delete($tablename, $where)
+    public function delete()
     {
-        $this->query("DELETE FROM $tablename $where");
-        return $this->execute();
+        $sql = "DELETE FROM `$this->table` $this->where $this->limit $this->offset";
+        return $this->executeQuery($sql);
     }
 
-
-    /*******************************************************
-     *
-     *  Database SELECT FUNCTIONS
-     *
-     *******************************************************/
-
-
-    public function all($tablename , $type=null)
-    {
-        $sql  = ("SELECT * FROM $tablename $this->whereStr $this->groupByStr $this->orderByStr $this->havingStr ");
-        $this->query = $sql;
-        $this->queryWithResult($sql);
-        if (!$this->execute()) {
-            die("Could not successfully run query ($sql) from DB: method all");
-        }
-        return $this->result($type);
-    }
-
-    public function get($fields, $tablename , $type=null)
-    {
-        $sql = ("SELECT $fields FROM $tablename $this->whereStr $this->groupByStr $this->orderByStr $this->havingStr ");
-        $this->query = $sql;
-        $this->queryWithResult($sql);
-        if (!$this->execute() ) {
-            return "Could not successfully run query ($sql) from DB: method get";
-            exit;
-        }
-        return $this->result($type);
-    }
-
-    public function executedQuery()
-    {
-        return $this->_stmt->debugDumpParams();
-    }
-
-    public function lastId()
-    {
-        $this->_dbh->lastInsertId();
-    }
-
-    public function first($table , $where = "",$type=null)
-    {
-        $this->queryWithResult("select * from {$table} {$where}");
-        return $this->onlyOne($type);
-    }
-
-    public function firstGet($fields , $table , $where = "",$type=null)
-    {
-        $this->queryWithResult("select {$fields} from {$table} {$where}");
-        return $this->onlyOne($type);
-    }
-
-    public function toJson($result)
-    {
-        header("Access-Control-Allow-Origin: *");
-        header("Content-Type: application/json; charset=UTF-8");
-        return json_encode($result);
-    }
 
 
     /*******************************************************
@@ -389,101 +401,73 @@ class Database
      *******************************************************/
 
 
+    public function table($name)
+    {
+        $this->table = $name;
+        return $this;
+    }
+
+    public function field($field)
+    {
+        $this->field = $field;
+        return $this;
+    }
+
+    public function primaryKey($field = "id")
+    {
+        $this->primaryKey = $field;
+        return $this;
+    }
+
     public function where($string)
     {
-        $this->whereStr = "WHERE $string";
+        $this->where = "WHERE $string";
         return $this;
     }
 
     public function orderBy($string)
     {
-        $this->orderByStr = "ORDER BY $string";
+        $this->orderBy = "ORDER BY $string";
         return $this;
     }
 
     public function groupBy($string)
     {
-        $this->groupByStr = "GROUP BY $string";
+        $this->groupBy = "GROUP BY $string";
         return $this;
     }
 
     public function having($string)
     {
-        $this->havingStr = "HAVING $string";
+        $this->having = "HAVING $string";
         return $this;
     }
 
-
-    public function createTable($query)
+    public function limit($limit)
     {
-       return  $this->queryWithExecute($query);
+        $this->limit = "LIMIT $limit";
+        return $this;
     }
 
-    public function showCreate($table , $type = "t")
+    public function offset($limit)
     {
-        if(in_array(strtolower($type) , ['table' , 't']))
-        {
-            $type = "Table";
-        }
-        elseif(in_array($type , ['view' , 'v']))
-        {
-            $type = "View";
-        }
-
-        $this->query("SHOW CREATE $type $table");
-        if($this->execute())
-        {
-            return wordwrap(get_object_vars($this->result()[0])["Create " . $type]);
-        }
-        return "";
-    }
-
-    public function describeTable($tablename)
-    {
-        $executed  = $this->queryWithExecute("describe $tablename ");
-        if($executed)
-        {
-            $data =  $this->result();
-            $result = "<table border='1' style='text-align: center;'>";
-            $result .= "<tr>";
-            $result .= "<th colspan='6' style='text-align:center;'>{$tablename}</th>";
-            $result .= "</tr>";
-            $result .= "<tr>";
-            $result .= "<th>Field</th> <th>Type</th> <th>Null</th> <th>Key</th> <th>Default</th> <th>Extra</th>" ;
-            $result .= "</tr>";
-            foreach ($data as $key => $describe)
-            {
-                $result .= "<tr>";
-                $result .= "<td>{$describe->Field}</td>
-								<td>{$describe->Type}</td>
-								<td>{$describe->Null}</td>
-								<td>{$describe->Key}</td>
-								<td>{$describe->Default}</td>
-								<td>{$describe->Extra}</td> " ;
-                $result .= "</tr>";
-            }
-
-            $result .= "</table>";
-            return $result;
-
-        }
-        return "";
-    }
-
-    public function showColumns($table , $newLine = false)
-    {
-        $this->queryWithResult("show columns from $table ");
-        $result = $this->result();
-        $newLine = ($newLine) ? "<br>\n" : "";
-        return  implode(" , $newLine", array_column( $result  , 'Field') );
+        $this->limit = "OFFSET $limit";
+        return $this;
     }
 
 
     /*******************************************************
      *
-     *  Database CUSTOM FUNCTIONS
+     *  PRIVATE HELPER FUNCTIONS
      *
      *******************************************************/
+
+
+    private function aggregateFunctions($type)
+    {
+        $sql  = ("SELECT $type($this->tableColumn) AS total FROM `$this->table` {$this->where} {$this->groupBy} {$this->orderBy} {$this->having} {$this->limit} {$this->offset} ");
+        return $sql;
+    }
 
     private function getResultType($type)
     {
@@ -537,6 +521,11 @@ class Database
 
     }//getResultType
 
+    private function nvl($string , $default = "")
+    {
+        return empty($string) ? $default : $string;
+    }
+
     private function arrayKeys($array)
     {
         $keys = [];
@@ -551,44 +540,147 @@ class Database
         return array_keys($array);
     }//end
 
-    private function nvl($string , $default = "")
+
+
+    /*******************************************************
+     *
+     *  GETTER FUNCTIONS
+     *
+     *******************************************************/
+
+    public function getSql()
     {
-        return empty($string) ? $default : $string;
+        return $this->dbQuery;
     }
 
-    private function clearData()
+
+    public function getErrors()
     {
-        $this->columns = [];
+        return $this->errors;
     }
 
+    public function getResult()
+    {
+        return $this->dbResult;
+    }
 
+    public function getExecutedSql()
+    {
+        return $this->stmt->debugDumpParams();
+    }
 
-    /*********************************************************
+    public function getInsertedID()
+    {
+        $id = $this->dbh->lastInsertId();
+        if($id) {
+            return $id;
+        }
+        return null;
+    }
+
+    /*****************************************************************************
      *  DATABASE MIGRATION
-     *********************************************************/
+     *****************************************************************************/
 
 
-    public function startQuery($actionType , $tableName , $replace = false)
+
+    /*******************************************************
+     *
+     *  Database DESCRIPTION FUNCTIONS
+     *
+     *******************************************************/
+
+    public function describe()
+    {
+        $executed  = $this->executeQuery("describe $this->table ");
+        if($executed)
+        {
+            $data =  $this->_result();
+            $result = "<table border='1' style='text-align: center;'>";
+            $result .= "<tr>";
+            $result .= "<th colspan='6' style='text-align:center;'>{$this->table}</th>";
+            $result .= "</tr>";
+            $result .= "<tr>";
+            $result .= "<th>Field</th> <th>Type</th> <th>Null</th> <th>Key</th> <th>Default</th> <th>Extra</th>" ;
+            $result .= "</tr>";
+            foreach ($data as $key => $describe)
+            {
+                $result .= "<tr>";
+                $result .= "<td>{$describe->Field}</td>
+								<td>{$describe->Type}</td>
+								<td>{$describe->Null}</td>
+								<td>{$describe->Key}</td>
+								<td>{$describe->Default}</td>
+								<td>{$describe->Extra}</td> " ;
+                $result .= "</tr>";
+            }
+
+            $result .= "</table>";
+            return $result;
+        }
+        return "";
+    }
+
+    public function showCreate($type = "t")
+    {
+        if(in_array(strtolower($type) , ['table' , 't']))
+        {
+            $type = "Table";
+        }
+        elseif(in_array($type , ['view' , 'v']))
+        {
+            $type = "View";
+        }
+
+        $execute = $this->executeQuery("SHOW CREATE $type $this->table");
+        if($execute)
+        {
+            return wordwrap(get_object_vars($this->_result()[0])["Create " . $type]);
+        }
+        return "";
+    }
+
+    public function showColumns($newLine = false)
+    {
+        $execute = $this->executeQuery("show columns from $this->table ");
+        if($execute){
+            $result = $this->_result();
+            $newLine = ($newLine) ? "<br>\n" : "";
+            return  implode(" , $newLine", array_column( $result  , 'Field') );
+        }
+        return "";
+    }
+
+
+
+
+    /*******************************************************
+     *
+     *  MIGRATION QUERY BUILDER
+     *
+     *******************************************************/
+
+
+    public function startQuery($actionType , $replace = false)
     {
         $this->actionType = $actionType ;
-        $this->table =  $tableName ;
 
         switch ($actionType)
         {
             case "create-table":{
-                $this->query = "CREATE TABLE ";
-                $this->query .= ($replace) ? " " : "IF NOT EXISTS ";
-                $this->query .= "`" . $tableName . "`" . " ( \n";
+                $this->dbQuery = "CREATE TABLE";
+                $this->dbQuery .= ($replace) ? " " : " IF NOT EXISTS ";
+                $this->dbQuery .= "`" . $this->table . "`" . " ( \n";
                 break;
             }
             case "drop-table":{
-                $this->query = "DROP TABLE ";
-                $this->query .= ($replace) ? "IF EXISTS " : " ";
-                $this->query .= "`" . $tableName . "`" . " \n";
+                $this->dbQuery = "DROP TABLE";
+                $this->dbQuery .= ($replace) ? " IF EXISTS " : " ";
+                $this->dbQuery .= "`" .  $this->table . "`" . " \n";
                 break;
             }
             default : {
-                throw  new Exception("Invalid Action Type");
+                die("Function: startQuery , Invalid parameters");
                 break;
             }
         }
@@ -599,44 +691,50 @@ class Database
     public function endQuery()
     {
         $this->generateColumns();
-
         switch ($this->actionType)
         {
             case "create-table":{
-                $this->query .= ") \n";
+                $this->dbQuery .= ") \n";
                 break;
             }
             default : {
-                $this->query .= "";
+                $this->dbQuery .= "";
                 break;
             }
         }
-
         $this->clearData();
-
     }
 
-    public function dropTable($table)
+    public function dropTable()
     {
-        $this->startQuery("drop-table" , "$table");
+        $this->startQuery("drop-table" , "$this->table");
         $this->endQuery();
         $query = $this->getSql();
-        if($this->queryWithExecute($query))
+        if($this->executeQuery($query))
         {
-            echo " Table `$table` dropped successfully`";
+            echo " Table `$this->table` dropped successfully`";
         }
         else
         {
-            echo "FAILED TO DROP TABLE $table " . $this->getErrors();
+            echo "FAILED TO DROP TABLE $this->table " . $this->getErrors();
         }
     }
 
+    public function executeMigration()
+    {
+        $sts = $this->executeQuery($this->dbQuery);
 
+        if($sts)
+        {
+            $this->clearVariables();
+            return true;
+        }
+        return false;
+    }
 
     /*********************************************************
      *  UNSIGNED INTEGER
      *********************************************************/
-
 
 
     public function unsignedInteger($columnName , $length = 11)
@@ -688,7 +786,7 @@ class Database
         return $this;
     }
 
-    public function tinyInteger($columnName , $length = 11)
+    public function tinyInteger($columnName , $length = 4)
     {
         $this->columns[] = "`$columnName` TINYINT($length)";
         return $this;
@@ -926,7 +1024,7 @@ class Database
         return $this;
     }
 
-    public function primaryKey()
+    public function primary()
     {
         $this->addColumn("PRIMARY KEY");
         return $this;
@@ -981,9 +1079,16 @@ class Database
     }
 
 
-    public function table($tableName)
+
+    /*******************************************************
+     *
+     *  PRIVATE FUNCTIONS
+     *
+     *******************************************************/
+
+    private function clearData()
     {
-        $this->table  = $tableName;
+        $this->columns = [];
     }
 
 
@@ -992,8 +1097,8 @@ class Database
         $count = count($this->columns);
         foreach($this->columns  as $i => $q)
         {
-            $this->query .= "$q";
-            $this->query .= ($i < $count - 1 ) ? ",\n" : "\n";
+            $this->dbQuery .= "$q";
+            $this->dbQuery .= ($i < $count - 1 ) ? ",\n" : "\n";
         }
     }
 
@@ -1011,37 +1116,23 @@ class Database
         {
             return $value;
         }
-        elseif(is_string($value))
-        {
-            return  "'" . $value . "'";
-        }
+        return  "'" . $value . "'";
     }
 
-
-    public function getQuery()
+    private function clearVariables()
     {
-        return $this->query;
+        $this->table = "";
+        $this->field = "*";
+        $this->primaryKey = "id";
+
+        $this->where = "";
+        $this->orderBy = "";
+        $this->groupBy = "";
+        $this->having = "";
+        $this->limit = "";
+        $this->offset = "";
+
     }
 
-    public function getErrors()
-    {
-        return $this->errors;
-    }
 
-
-    /*
-
-
-$config =  [
-    'driver' => 'mysql',
-    'host' =>  'localhost',
-    'Controllers' => '',
-    'username' => 'root',
-    'password' => '',
-    'port' => '3306',
-    "option" => true
-];
-
-     */
-
-}//class Database End
+}//class end
