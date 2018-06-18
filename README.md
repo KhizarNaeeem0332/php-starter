@@ -1,2 +1,2 @@
 # php-starter
-core php simple setup with bootstrap 4 beta 3
+core php simple setup with bootstrap 4 and composer
